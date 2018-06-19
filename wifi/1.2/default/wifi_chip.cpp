@@ -105,6 +105,12 @@ std::string getP2pIfaceName() {
     return buffer.data();
 }
 
+std::string getApIfaceName() {
+    std::array<char, PROPERTY_VALUE_MAX> buffer;
+    property_get("persist.vendor.wifi.softap.interface", buffer.data(), "");
+    return buffer.data();
+}
+
 // delete files that meet either conditions:
 // 1. older than a predefined time in the wifi tombstone dir.
 // 2. Files in excess to a predefined amount, starting from the oldest ones
@@ -744,7 +750,9 @@ std::pair<WifiStatus, sp<IWifiApIface>> WifiChip::createApIfaceInternal() {
     if (!canCurrentModeSupportIfaceOfType(IfaceType::AP)) {
         return {createWifiStatus(WifiStatusCode::ERROR_NOT_AVAILABLE), {}};
     }
-    std::string ifname = allocateApOrStaIfaceName();
+    std::string ifname = getApIfaceName();
+    if (ifname.empty())
+        ifname = allocateApOrStaIfaceName();
     sp<WifiApIface> iface = new WifiApIface(ifname, legacy_hal_);
     ap_ifaces_.push_back(iface);
     for (const auto& callback : event_cb_handler_.getCallbacks()) {
@@ -1211,10 +1219,17 @@ void WifiChip::populateModes() {
             {chip_iface_combination_limit_1, chip_iface_combination_limit_2}};
         const IWifiChip::ChipIfaceCombination chip_iface_combination_2 = {
             {chip_iface_combination_limit_1, chip_iface_combination_limit_3}};
-        const IWifiChip::ChipMode chip_mode = {
+        if (feature_flags_.lock()->isApDisabled()) {
+          const IWifiChip::ChipMode chip_mode = {
+              kV2ChipModeId,
+              {chip_iface_combination_2}};
+          modes_ = {chip_mode};
+        } else {
+          const IWifiChip::ChipMode chip_mode = {
             kV2ChipModeId,
             {chip_iface_combination_1, chip_iface_combination_2}};
-        modes_ = {chip_mode};
+          modes_ = {chip_mode};
+        }
     } else {
         // V1 Iface combinations for Mode Id = 0. (STA Mode)
         const IWifiChip::ChipIfaceCombinationLimit
@@ -1238,7 +1253,11 @@ void WifiChip::populateModes() {
             {ap_chip_iface_combination_limit}};
         const IWifiChip::ChipMode ap_chip_mode = {kV1ApChipModeId,
                                                   {ap_chip_iface_combination}};
-        modes_ = {sta_chip_mode, ap_chip_mode};
+        if (feature_flags_.lock()->isApDisabled()) {
+          modes_ = {sta_chip_mode};
+        } else {
+          modes_ = {sta_chip_mode, ap_chip_mode};
+        }
     }
 }
 
